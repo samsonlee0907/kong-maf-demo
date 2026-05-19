@@ -165,7 +165,7 @@ After you publish this repository to GitHub, replace both `YOUR_GITHUB_OWNER` an
 - the Foundry project
 - the `gpt-5.4-mini` model deployment
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FYOUR_GITHUB_OWNER%2FYOUR_GITHUB_REPO%2Fmain%2Finfra%2Fazuredeploy.json)
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fsamsonlee0907%2Fkong-maf-demo%2Fmain%2Finfra%2Fazuredeploy.json)
 
 The button intentionally bootstraps only the base Foundry resources. The Hosted Agent and Azure Kong deployment still require container image builds, so they are handled by the scripts in `infra/`.
 
