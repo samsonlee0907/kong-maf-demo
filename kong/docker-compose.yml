@@ -1,0 +1,37 @@
+version: "3.9"
+
+services:
+  kong:
+    image: kong:3.9
+    container_name: kong-maf-gateway
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /config/kong.yaml
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_NGINX_PROXY_PROXY_BUFFERING: "off"
+      KONG_NGINX_PROXY_PROXY_CACHE: "off"
+      KONG_NGINX_PROXY_CHUNKED_TRANSFER_ENCODING: "on"
+      KONG_NGINX_PROXY_TCP_NODELAY: "on"
+      KONG_NGINX_PROXY_TCP_NOPUSH: "on"
+      KONG_NGINX_PROXY_KEEPALIVE_TIMEOUT: "300"
+      KONG_NGINX_PROXY_PROXY_READ_TIMEOUT: "600s"
+      KONG_NGINX_PROXY_PROXY_SEND_TIMEOUT: "600s"
+    volumes:
+      - ./kong.yaml:/config/kong.yaml:ro
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: on-failure
+

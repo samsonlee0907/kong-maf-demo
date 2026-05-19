@@ -1,0 +1,1267 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kong + MAF Trace Portal</title>
+    <style>
+      :root {
+        --bg: #08121c;
+        --bg-accent: #112638;
+        --panel: rgba(8, 18, 28, 0.82);
+        --panel-border: rgba(130, 182, 213, 0.24);
+        --panel-strong: rgba(14, 31, 46, 0.94);
+        --ink: #e9f1f7;
+        --muted: #9ab4c8;
+        --teal: #57d9c2;
+        --amber: #f5a45a;
+        --rose: #ff7676;
+        --line: rgba(130, 182, 213, 0.16);
+        --shadow: 0 28px 60px rgba(0, 0, 0, 0.32);
+        --radius: 24px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top left, rgba(87, 217, 194, 0.18), transparent 28%),
+          radial-gradient(circle at top right, rgba(245, 164, 90, 0.16), transparent 30%),
+          linear-gradient(160deg, #061019 0%, #08121c 42%, #0f2433 100%);
+        color: var(--ink);
+        font-family: "Bahnschrift", "Segoe UI Variable Display", sans-serif;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        background-size: 48px 48px;
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.5), transparent 92%);
+        pointer-events: none;
+      }
+
+      .shell {
+        position: relative;
+        z-index: 1;
+        width: min(1360px, calc(100vw - 32px));
+        margin: 18px auto 32px;
+        display: grid;
+        gap: 18px;
+      }
+
+      .hero,
+      .workspace,
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(18px);
+      }
+
+      .hero {
+        padding: 24px 24px 22px;
+        overflow: hidden;
+      }
+
+      .hero::after {
+        content: "";
+        position: absolute;
+        right: -60px;
+        top: -80px;
+        width: 260px;
+        height: 260px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(245, 164, 90, 0.28), transparent 66%);
+        pointer-events: none;
+      }
+
+      .hero-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(2rem, 4vw, 3.6rem);
+        line-height: 0.95;
+        letter-spacing: 0.02em;
+        max-width: 12ch;
+      }
+
+      .hero p {
+        margin: 10px 0 0;
+        max-width: 72ch;
+        color: var(--muted);
+        font-size: 0.98rem;
+      }
+
+      .badges {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .badge {
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--ink);
+        font-size: 0.85rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .badge strong {
+        color: var(--teal);
+        font-weight: 700;
+      }
+
+      .workspace {
+        padding: 18px;
+        display: grid;
+        grid-template-columns: minmax(320px, 560px) minmax(320px, 1fr);
+        gap: 18px;
+      }
+
+      .panel {
+        padding: 18px;
+        display: grid;
+        gap: 16px;
+        min-height: 640px;
+      }
+
+      .panel-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+
+      .panel h2 {
+        margin: 0;
+        font-size: 1.18rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .subtle {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .controls {
+        display: grid;
+        gap: 14px;
+      }
+
+      .control-row {
+        display: grid;
+        gap: 12px;
+      }
+
+      label {
+        display: grid;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 0.86rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      input,
+      textarea,
+      button {
+        font: inherit;
+      }
+
+      input,
+      textarea {
+        width: 100%;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--ink);
+        padding: 14px 16px;
+        outline: none;
+        transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+      }
+
+      input:focus,
+      textarea:focus {
+        border-color: rgba(87, 217, 194, 0.6);
+        transform: translateY(-1px);
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      textarea {
+        resize: vertical;
+        min-height: 152px;
+        line-height: 1.55;
+      }
+
+      .mode-switch {
+        display: inline-grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+        padding: 6px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .mode-switch button {
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .mode-switch button.active {
+        background: linear-gradient(135deg, rgba(87, 217, 194, 0.22), rgba(87, 217, 194, 0.08));
+        color: var(--ink);
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .primary,
+      .secondary {
+        border: 0;
+        border-radius: 16px;
+        padding: 14px 18px;
+        cursor: pointer;
+        transition: transform 160ms ease, opacity 160ms ease, box-shadow 160ms ease;
+      }
+
+      .primary {
+        background: linear-gradient(135deg, var(--amber), #ffd287);
+        color: #08121c;
+        font-weight: 700;
+        box-shadow: 0 16px 26px rgba(245, 164, 90, 0.28);
+      }
+
+      .secondary {
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--ink);
+      }
+
+      .primary:hover,
+      .secondary:hover {
+        transform: translateY(-1px);
+      }
+
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .metric {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 18px;
+        padding: 14px;
+      }
+
+      .metric .label {
+        display: block;
+        color: var(--muted);
+        font-size: 0.76rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .metric .value {
+        display: block;
+        margin-top: 8px;
+        font-size: 1.02rem;
+        line-height: 1.35;
+        word-break: break-word;
+      }
+
+      .chat-rail {
+        display: grid;
+        gap: 14px;
+        align-content: start;
+      }
+
+      .bubble {
+        background: var(--panel-strong);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 18px;
+        padding: 14px 16px;
+      }
+
+      .bubble .who {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+        font-size: 0.76rem;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+        color: var(--muted);
+      }
+
+      .bubble .body {
+        white-space: pre-wrap;
+        line-height: 1.62;
+        min-height: 52px;
+      }
+
+      .log-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .trace-chip {
+        padding: 8px 10px;
+        border-radius: 999px;
+        background: rgba(87, 217, 194, 0.08);
+        color: var(--teal);
+        font-size: 0.8rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .log-window {
+        min-height: 0;
+        overflow: auto;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
+          rgba(5, 12, 18, 0.75);
+        padding: 10px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .log-entry {
+        padding: 12px 12px 10px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        background: rgba(255, 255, 255, 0.03);
+        animation: rise 180ms ease;
+      }
+
+      .log-entry.warning {
+        border-color: rgba(245, 164, 90, 0.4);
+      }
+
+      .log-entry.error {
+        border-color: rgba(255, 118, 118, 0.46);
+        background: rgba(255, 118, 118, 0.08);
+      }
+
+      .log-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 6px;
+        font-family: "Cascadia Code", "Fira Code", monospace;
+        font-size: 0.82rem;
+      }
+
+      .hop {
+        color: var(--teal);
+      }
+
+      .stamp {
+        color: var(--muted);
+      }
+
+      .log-message {
+        line-height: 1.45;
+      }
+
+      .log-detail {
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid var(--line);
+        color: #c3d6e4;
+        font-family: "Cascadia Code", "Fira Code", monospace;
+        font-size: 0.79rem;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .empty-state {
+        min-height: 120px;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        text-align: center;
+        padding: 18px;
+        border: 1px dashed rgba(255, 255, 255, 0.12);
+        border-radius: 18px;
+      }
+
+      .status {
+        color: var(--muted);
+        font-size: 0.92rem;
+        min-height: 24px;
+      }
+
+      .status strong {
+        color: var(--amber);
+      }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(5px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @media (max-width: 980px) {
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .panel {
+          min-height: 520px;
+        }
+
+        .summary-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .shell {
+          width: min(100vw - 16px, 100%);
+          margin-top: 8px;
+        }
+
+        .hero,
+        .workspace,
+        .panel {
+          border-radius: 20px;
+        }
+
+        .workspace,
+        .panel,
+        .hero {
+          padding: 14px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div class="hero-top">
+          <div>
+            <h1>Kong + MAF<br />Trace Portal</h1>
+            <p>
+              Drive the agent through Kong and watch the request path unfold in real time.
+              Each run carries a shared trace ID so the browser log can show
+              <code>UI -&gt; Kong -&gt; MAF -&gt; Foundry</code> and the return path as it happens.
+            </p>
+          </div>
+          <div class="badges">
+            <span class="badge">Model <strong id="badge-model">gpt-5.4-mini</strong></span>
+            <span class="badge">Agent <strong id="badge-agent">loading</strong></span>
+            <span class="badge">Trace Header <strong>X-Trace-Id</strong></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Control Deck</h2>
+              <div class="subtle">
+                Use <code>/portal</code> through Kong for the cleanest demo path. The gateway target
+                stays editable so you can preview without Docker as well.
+              </div>
+            </div>
+          </div>
+
+          <form id="chat-form" class="controls">
+            <div class="control-row">
+              <label for="gateway-url">
+                Gateway URL
+                <input
+                  id="gateway-url"
+                  name="gateway-url"
+                  type="text"
+                  placeholder="http://127.0.0.1:8000"
+                  autocomplete="off"
+                />
+              </label>
+            </div>
+
+            <div class="control-row">
+              <div class="mode-switch" role="tablist" aria-label="Request mode">
+                <button id="mode-invoke" type="button" class="active" data-mode="invoke">Non-SSE</button>
+                <button id="mode-stream" type="button" data-mode="stream">SSE Stream</button>
+              </div>
+            </div>
+
+            <div class="control-row">
+              <label for="message">
+                Prompt
+                <textarea
+                  id="message"
+                  name="message"
+                  placeholder="Ask the agent what Kong is doing, or request a short streaming explanation."
+                >Explain, in a few sentences, how Kong and MAF divide responsibilities in this demo.</textarea>
+              </label>
+            </div>
+
+            <div class="actions">
+              <button class="primary" type="submit" id="send-button">Run Through Gateway</button>
+              <button class="secondary" type="button" id="probe-button">Probe Gateway</button>
+              <button class="secondary" type="button" id="clear-button">Clear Logs</button>
+            </div>
+          </form>
+
+          <div class="summary-grid">
+            <div class="metric">
+              <span class="label">Current Trace</span>
+              <span class="value" id="trace-value">waiting</span>
+            </div>
+            <div class="metric">
+              <span class="label">Portal Origin</span>
+              <span class="value" id="served-from">loading</span>
+            </div>
+            <div class="metric">
+              <span class="label">Gateway Target</span>
+              <span class="value" id="gateway-summary">loading</span>
+            </div>
+          </div>
+
+          <div class="chat-rail">
+            <article class="bubble">
+              <div class="who">
+                <span>User Prompt</span>
+                <span id="prompt-meta">Idle</span>
+              </div>
+              <div class="body" id="prompt-output">No request yet.</div>
+            </article>
+
+            <article class="bubble">
+              <div class="who">
+                <span>Agent Response</span>
+                <span id="response-meta">Awaiting run</span>
+              </div>
+              <div class="body" id="response-output">The next response will appear here.</div>
+            </article>
+          </div>
+
+          <div class="status" id="status-line">
+            Initializing portal configuration.
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Hop Ledger</h2>
+              <div class="subtle">
+                Browser-generated entries show the outer edges of the request.
+                Server-generated entries show when Kong reaches FastAPI and when MAF talks to Foundry.
+              </div>
+            </div>
+            <div class="log-meta">
+              <span class="trace-chip" id="trace-chip">No active trace</span>
+            </div>
+          </div>
+
+          <div id="log-window" class="log-window">
+            <div class="empty-state" id="empty-state">
+              Launch a request to populate the live hop log.
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const state = {
+        mode: "invoke",
+        config: null,
+        traceSource: null,
+        currentTraceId: null,
+        gatewayProfile: "local-maf",
+      };
+
+      const elements = {
+        form: document.getElementById("chat-form"),
+        gatewayUrl: document.getElementById("gateway-url"),
+        message: document.getElementById("message"),
+        modeInvoke: document.getElementById("mode-invoke"),
+        modeStream: document.getElementById("mode-stream"),
+        sendButton: document.getElementById("send-button"),
+        probeButton: document.getElementById("probe-button"),
+        clearButton: document.getElementById("clear-button"),
+        servedFrom: document.getElementById("served-from"),
+        gatewaySummary: document.getElementById("gateway-summary"),
+        traceValue: document.getElementById("trace-value"),
+        traceChip: document.getElementById("trace-chip"),
+        promptOutput: document.getElementById("prompt-output"),
+        promptMeta: document.getElementById("prompt-meta"),
+        responseOutput: document.getElementById("response-output"),
+        responseMeta: document.getElementById("response-meta"),
+        statusLine: document.getElementById("status-line"),
+        logWindow: document.getElementById("log-window"),
+        emptyState: document.getElementById("empty-state"),
+        badgeAgent: document.getElementById("badge-agent"),
+        badgeModel: document.getElementById("badge-model"),
+      };
+
+      function setMode(mode) {
+        state.mode = mode;
+        elements.modeInvoke.classList.toggle("active", mode === "invoke");
+        elements.modeStream.classList.toggle("active", mode === "stream");
+        elements.sendButton.textContent =
+          mode === "stream" ? "Start Stream Through Gateway" : "Run Through Gateway";
+        elements.responseMeta.textContent = mode === "stream" ? "Waiting for SSE" : "Awaiting JSON";
+      }
+
+      function nowStamp(ts = new Date()) {
+        const date = ts instanceof Date ? ts : new Date(ts);
+        return date.toLocaleTimeString([], { hour12: false });
+      }
+
+      function createTraceId() {
+        return `portal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      }
+
+      function sanitizeDetail(detail) {
+        if (!detail || Object.keys(detail).length === 0) {
+          return "";
+        }
+        return JSON.stringify(detail, null, 2);
+      }
+
+      function ensureLogWindowReady() {
+        if (elements.emptyState) {
+          elements.emptyState.remove();
+        }
+      }
+
+      function addLog(entry) {
+        ensureLogWindowReady();
+        const item = document.createElement("article");
+        item.className = `log-entry ${entry.level || "info"}`;
+
+        const top = document.createElement("div");
+        top.className = "log-top";
+        top.innerHTML = `
+          <span class="hop">#${entry.index || "?"} ${entry.source} -> ${entry.target}</span>
+          <span class="stamp">${nowStamp(entry.ts)}</span>
+        `;
+
+        const body = document.createElement("div");
+        body.className = "log-message";
+        body.textContent = entry.message;
+
+        item.appendChild(top);
+        item.appendChild(body);
+
+        const detail = sanitizeDetail(entry.detail);
+        if (detail) {
+          const meta = document.createElement("div");
+          meta.className = "log-detail";
+          meta.textContent = detail;
+          item.appendChild(meta);
+        }
+
+        elements.logWindow.appendChild(item);
+        elements.logWindow.scrollTop = elements.logWindow.scrollHeight;
+      }
+
+      function addClientLog(source, target, message, detail = {}, level = "info") {
+        addLog({
+          ts: new Date().toISOString(),
+          source,
+          target,
+          message,
+          detail,
+          level,
+          index: "ui",
+        });
+      }
+
+      function setStatus(text, highlight = false) {
+        elements.statusLine.innerHTML = highlight ? `<strong>${text}</strong>` : text;
+      }
+
+      function trimText(value, limit = 140) {
+        const compact = String(value || "").replace(/\s+/g, " ").trim();
+        if (compact.length <= limit) {
+          return compact;
+        }
+        return `${compact.slice(0, Math.max(0, limit - 3))}...`;
+      }
+
+      function normalizeUrl(value) {
+        try {
+          return new URL(value).origin;
+        } catch {
+          return String(value || "").trim().replace(/\/+$/, "");
+        }
+      }
+
+      function resolveGatewayProfile(gatewayUrl) {
+        const normalizedGateway = normalizeUrl(gatewayUrl);
+        const normalizedAzure = normalizeUrl(state.config?.azureGatewayUrl);
+        if (normalizedAzure && normalizedGateway === normalizedAzure) {
+          return "azure-hosted";
+        }
+        if (/azurecontainerapps\.io$/i.test(normalizedGateway)) {
+          return "azure-hosted";
+        }
+        return "local-maf";
+      }
+
+      function applyGatewayProfile(gatewayUrl) {
+        state.gatewayProfile = resolveGatewayProfile(gatewayUrl);
+        const usingAzureHostedAgent = state.gatewayProfile === "azure-hosted";
+        const agentName = usingAzureHostedAgent
+          ? state.config?.azureHostedAgentName || state.config?.agentName || "unknown"
+          : state.config?.localAgentName || state.config?.agentName || "unknown";
+
+        elements.badgeAgent.textContent = agentName;
+        return state.gatewayProfile;
+      }
+
+      function updateSummary(gatewayUrl) {
+        const profile = applyGatewayProfile(gatewayUrl);
+        elements.servedFrom.textContent = state.config?.servedFrom || window.location.origin;
+        elements.gatewaySummary.textContent = gatewayUrl;
+        elements.traceValue.textContent = state.currentTraceId || "waiting";
+        elements.traceChip.textContent = state.currentTraceId
+          ? `${state.currentTraceId} (${profile})`
+          : "No active trace";
+      }
+
+      async function loadConfig() {
+        const response = await fetch("/ui/config");
+        state.config = await response.json();
+        elements.gatewayUrl.value = state.config.defaultGatewayUrl || window.location.origin;
+        elements.servedFrom.textContent = state.config.servedFrom || window.location.origin;
+        updateSummary(elements.gatewayUrl.value);
+        elements.badgeModel.textContent = state.config.foundryModel || "gpt-5.4-mini";
+        if (state.gatewayProfile === "azure-hosted") {
+          setStatus(
+            `Portal ready in Azure Hosted Agent mode. Requests will use ${elements.gatewayUrl.value} through Azure Kong and Foundry Hosted Agent responses.`
+          );
+        } else if (state.config.portalMode === "direct-preview") {
+          setStatus(
+            `Portal ready in direct preview mode. Requests will use ${elements.gatewayUrl.value} until Kong is started.`
+          );
+        } else {
+          setStatus("Portal ready. Send a request to open a traced session.");
+        }
+      }
+
+      function closeTraceStream() {
+        if (state.traceSource) {
+          state.traceSource.close();
+          state.traceSource = null;
+        }
+      }
+
+      function openTraceStream(traceId) {
+        if (state.gatewayProfile === "azure-hosted") {
+          closeTraceStream();
+          addClientLog(
+            "ui",
+            "cloud-trace",
+            "Azure gateway mode is using client-side hop reconstruction instead of the local trace channel.",
+            {
+              gateway_url: elements.gatewayUrl.value.trim(),
+              trace_id: traceId,
+            }
+          );
+          return;
+        }
+
+        closeTraceStream();
+        const traceUrl = new URL(`/ui/logs/${encodeURIComponent(traceId)}`, window.location.origin);
+        const source = new EventSource(traceUrl);
+        state.traceSource = source;
+
+        source.addEventListener("ready", (event) => {
+          const payload = JSON.parse(event.data);
+          addClientLog("ui", "trace-channel", "The live trace stream is attached.", payload);
+        });
+
+        source.addEventListener("trace", (event) => {
+          const payload = JSON.parse(event.data);
+          addLog(payload);
+        });
+
+        source.onerror = () => {
+          addClientLog("trace-channel", "ui", "The live trace stream encountered a transport error.", {}, "warning");
+        };
+      }
+
+      function buildHeaders(traceId, extra = {}) {
+        return {
+          "Content-Type": "application/json",
+          "X-Trace-Id": traceId,
+          ...extra,
+        };
+      }
+
+      async function parseSseResponse(response, onEvent) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const blocks = buffer.split(/\r?\n\r?\n/);
+          buffer = blocks.pop() || "";
+
+          for (const block of blocks) {
+            const parsed = parseSseBlock(block);
+            if (parsed) {
+              onEvent(parsed);
+            }
+          }
+        }
+
+        const tail = decoder.decode();
+        if (tail) {
+          buffer += tail;
+        }
+
+        if (buffer.trim()) {
+          const parsed = parseSseBlock(buffer);
+          if (parsed) {
+            onEvent(parsed);
+          }
+        }
+      }
+
+      function parseSseBlock(block) {
+        const lines = block.split(/\r?\n/);
+        let event = "message";
+        const dataLines = [];
+
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            event = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            dataLines.push(line.slice(5).trim());
+          }
+        }
+
+        if (dataLines.length === 0) {
+          return null;
+        }
+
+        return {
+          event,
+          data: dataLines.join("\n"),
+        };
+      }
+
+      function extractResponsesText(payload) {
+        if (!payload || !Array.isArray(payload.output)) {
+          return "";
+        }
+
+        const chunks = [];
+        for (const item of payload.output) {
+          const contents = Array.isArray(item?.content) ? item.content : [];
+          for (const content of contents) {
+            if (typeof content?.text === "string") {
+              chunks.push(content.text);
+            }
+          }
+        }
+        return chunks.join("");
+      }
+
+      function summarizeAgentReference(payload) {
+        const ref = payload?.agent_reference || payload?.response?.agent_reference || payload?.item?.agent_reference;
+        if (!ref) {
+          return {};
+        }
+        return {
+          agent_name: ref.name,
+          agent_version: ref.version,
+        };
+      }
+
+      async function runHostedInvoke(gatewayUrl, message, traceId) {
+        const target = new URL("/responses", gatewayUrl).toString();
+        addClientLog("ui", "kong", "The browser dispatched an OpenAI-compatible Responses API call to Azure Kong.", {
+          endpoint: target,
+          trace_id: traceId,
+          contract: "responses",
+        });
+
+        const response = await fetch(target, {
+          method: "POST",
+          headers: buildHeaders(traceId),
+          body: JSON.stringify({ input: message, stream: false }),
+        });
+
+        const payload = await response.json();
+        const text = extractResponsesText(payload);
+        const agentReference = summarizeAgentReference(payload);
+
+        addClientLog("kong", "hosted-agent", "Azure Kong proxied the Responses request to the Foundry Hosted Agent.", {
+          status: response.status,
+          trace_id: traceId,
+          ...agentReference,
+        }, response.ok ? "info" : "error");
+
+        if (response.ok) {
+          addClientLog("hosted-agent", "foundry", "The Hosted Agent invoked the Foundry model runtime.", {
+            stream: false,
+            model: state.config?.foundryModel || "gpt-5.4-mini",
+            ...agentReference,
+          });
+          addClientLog("foundry", "hosted-agent", "Foundry returned the completed result to the Hosted Agent.", {
+            characters: text.length,
+            preview: trimText(text),
+          });
+          addClientLog("hosted-agent", "kong", "The Hosted Agent returned the Responses payload to Kong.", agentReference);
+        }
+
+        addClientLog("kong", "ui", "Azure Kong returned the Hosted Agent response to the browser.", {
+          status: response.status,
+          trace_id: traceId,
+          ...agentReference,
+        }, response.ok ? "info" : "error");
+
+        if (!response.ok) {
+          throw new Error(payload.detail || payload.error?.message || `Gateway returned ${response.status}`);
+        }
+
+        elements.responseMeta.textContent = `Completed at ${nowStamp()}`;
+        elements.responseOutput.textContent = text || JSON.stringify(payload, null, 2);
+      }
+
+      async function runHostedStream(gatewayUrl, message, traceId) {
+        const target = new URL("/responses", gatewayUrl).toString();
+        addClientLog("ui", "kong", "The browser opened a streaming Responses API request through Azure Kong.", {
+          endpoint: target,
+          trace_id: traceId,
+          contract: "responses",
+        });
+
+        const response = await fetch(target, {
+          method: "POST",
+          headers: buildHeaders(traceId, { Accept: "text/event-stream" }),
+          body: JSON.stringify({ input: message, stream: true }),
+        });
+
+        addClientLog("kong", "ui", "Azure Kong accepted the Hosted Agent streaming request.", {
+          status: response.status,
+          trace_id: traceId,
+        }, response.ok ? "info" : "error");
+
+        if (!response.ok || !response.body) {
+          const detail = await response.text();
+          throw new Error(detail || `Gateway returned ${response.status}`);
+        }
+
+        elements.responseOutput.textContent = "";
+        elements.responseMeta.textContent = "Streaming";
+
+        let upstreamAnnounced = false;
+        let firstDeltaLogged = false;
+
+        await parseSseResponse(response, (packet) => {
+          const payload = JSON.parse(packet.data);
+          const agentReference = summarizeAgentReference(payload);
+
+          if (packet.event === "response.created") {
+            addClientLog("kong", "hosted-agent", "Azure Kong forwarded the streaming request to the Foundry Hosted Agent.", {
+              trace_id: traceId,
+              ...agentReference,
+            });
+            addClientLog("hosted-agent", "foundry", "The Hosted Agent opened a streaming response against Foundry.", {
+              stream: true,
+              model: state.config?.foundryModel || "gpt-5.4-mini",
+              ...agentReference,
+            });
+            upstreamAnnounced = true;
+            return;
+          }
+
+          if (packet.event === "response.output_text.delta") {
+            const chunk = payload.delta || "";
+            elements.responseOutput.textContent += chunk;
+
+            if (!upstreamAnnounced) {
+              addClientLog("kong", "hosted-agent", "Azure Kong forwarded the streaming request to the Foundry Hosted Agent.", {
+                trace_id: traceId,
+                ...agentReference,
+              });
+              addClientLog("hosted-agent", "foundry", "The Hosted Agent opened a streaming response against Foundry.", {
+                stream: true,
+                model: state.config?.foundryModel || "gpt-5.4-mini",
+                ...agentReference,
+              });
+              upstreamAnnounced = true;
+            }
+
+            if (!firstDeltaLogged && chunk) {
+              addClientLog("foundry", "hosted-agent", "Foundry started returning streamed text to the Hosted Agent.", {
+                preview: trimText(chunk),
+              });
+              addClientLog("hosted-agent", "kong", "The Hosted Agent started relaying streamed text back through Kong.", {
+                ...agentReference,
+              });
+              firstDeltaLogged = true;
+            }
+
+            if (chunk) {
+              addClientLog("kong", "ui", "The browser received a streamed chunk from Azure Kong.", {
+                sequence_number: payload.sequence_number,
+                chunk,
+              });
+            }
+            return;
+          }
+
+          if (packet.event === "response.completed") {
+            elements.responseMeta.textContent = `Stream complete at ${nowStamp()}`;
+            addClientLog("hosted-agent", "kong", "The Hosted Agent completed the streaming response back to Kong.", agentReference);
+            addClientLog("kong", "ui", "Azure Kong closed the Hosted Agent stream back to the browser.", {
+              trace_id: traceId,
+              ...agentReference,
+            });
+            return;
+          }
+
+          if (packet.event === "response.failed" || packet.event === "error") {
+            addClientLog("kong", "ui", "The Azure Hosted Agent stream returned an error event.", payload, "error");
+            throw new Error(payload.detail || payload.error?.message || payload.status || "Unknown stream error");
+          }
+        });
+      }
+
+      async function runInvoke(gatewayUrl, message, traceId) {
+        if (state.gatewayProfile === "azure-hosted") {
+          await runHostedInvoke(gatewayUrl, message, traceId);
+          return;
+        }
+
+        const target = new URL("/invoke", gatewayUrl).toString();
+        addClientLog("ui", "kong", "The browser dispatched a JSON request to Kong.", {
+          endpoint: target,
+          trace_id: traceId,
+        });
+
+        const response = await fetch(target, {
+          method: "POST",
+          headers: buildHeaders(traceId),
+          body: JSON.stringify({ message }),
+        });
+
+        addClientLog("kong", "ui", "Kong returned the JSON response to the browser.", {
+          status: response.status,
+          trace_id: response.headers.get("x-trace-id") || traceId,
+        }, response.ok ? "info" : "error");
+
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.detail || `Gateway returned ${response.status}`);
+        }
+
+        elements.responseMeta.textContent = `Completed at ${nowStamp()}`;
+        elements.responseOutput.textContent = payload.output || JSON.stringify(payload, null, 2);
+      }
+
+      async function runStream(gatewayUrl, message, traceId) {
+        if (state.gatewayProfile === "azure-hosted") {
+          await runHostedStream(gatewayUrl, message, traceId);
+          return;
+        }
+
+        const target = new URL("/stream", gatewayUrl).toString();
+        addClientLog("ui", "kong", "The browser opened an SSE request through Kong.", {
+          endpoint: target,
+          trace_id: traceId,
+        });
+
+        const response = await fetch(target, {
+          method: "POST",
+          headers: buildHeaders(traceId, { Accept: "text/event-stream" }),
+          body: JSON.stringify({ message }),
+        });
+
+        addClientLog("kong", "ui", "Kong accepted the streaming request and started the SSE response.", {
+          status: response.status,
+          trace_id: response.headers.get("x-trace-id") || traceId,
+        }, response.ok ? "info" : "error");
+
+        if (!response.ok || !response.body) {
+          const detail = await response.text();
+          throw new Error(detail || `Gateway returned ${response.status}`);
+        }
+
+        elements.responseOutput.textContent = "";
+        elements.responseMeta.textContent = "Streaming";
+
+        await parseSseResponse(response, (packet) => {
+          const payload = JSON.parse(packet.data);
+          if (packet.event === "token") {
+            elements.responseOutput.textContent += payload.chunk;
+            addClientLog("kong", "ui", "The browser received a streamed chunk from Kong.", {
+              index: payload.index,
+              chunk: payload.chunk,
+            });
+            return;
+          }
+
+          if (packet.event === "done") {
+            elements.responseMeta.textContent = `Stream complete at ${nowStamp()}`;
+            addClientLog("kong", "ui", "Kong closed the SSE stream back to the browser.", payload);
+            return;
+          }
+
+          if (packet.event === "error") {
+            addClientLog("kong", "ui", "The SSE stream returned an error event.", payload, "error");
+            throw new Error(payload.detail || payload.status || "Unknown stream error");
+          }
+        });
+      }
+
+      async function probeGateway() {
+        const gatewayUrl = elements.gatewayUrl.value.trim();
+        updateSummary(gatewayUrl);
+        try {
+          setStatus("Probing gateway health.");
+          const response = await fetch(new URL("/health", gatewayUrl));
+          const payload = await response.json();
+          addClientLog("ui", "kong", "Health probe sent to the gateway.", {
+            endpoint: new URL("/health", gatewayUrl).toString(),
+          });
+          addClientLog("kong", "ui", "Gateway health probe returned to the browser.", payload, response.ok ? "info" : "warning");
+          setStatus("Gateway probe finished.");
+        } catch (error) {
+          addClientLog("kong", "ui", "Gateway probe failed in the browser.", { error: String(error) }, "error");
+          setStatus("Gateway probe failed.", true);
+        }
+      }
+
+      async function handleSubmit(event) {
+        event.preventDefault();
+        const gatewayUrl = elements.gatewayUrl.value.trim();
+        const message = elements.message.value.trim();
+        if (!gatewayUrl || !message) {
+          setStatus("Both gateway URL and prompt are required.", true);
+          return;
+        }
+
+        const traceId = createTraceId();
+        state.currentTraceId = traceId;
+        updateSummary(gatewayUrl);
+        elements.promptOutput.textContent = message;
+        elements.promptMeta.textContent = `${state.mode.toUpperCase()} at ${nowStamp()}`;
+        elements.responseOutput.textContent = state.mode === "stream" ? "" : "Waiting for response.";
+        elements.responseMeta.textContent = "Request in flight";
+
+        openTraceStream(traceId);
+        setStatus(
+          `Running ${state.mode === "stream" ? "SSE" : "non-SSE"} flow with trace ${traceId} via ${state.gatewayProfile === "azure-hosted" ? "Azure Kong + Hosted Agent" : "local Kong + FastAPI MAF"}.`
+        );
+
+        try {
+          if (state.mode === "invoke") {
+            await runInvoke(gatewayUrl, message, traceId);
+          } else {
+            await runStream(gatewayUrl, message, traceId);
+          }
+          setStatus(`Trace ${traceId} completed.`);
+        } catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          elements.responseMeta.textContent = "Request failed";
+          elements.responseOutput.textContent = text;
+          addClientLog("kong", "ui", "The request failed before the browser received a successful result.", {
+            error: text,
+            trace_id: traceId,
+          }, "error");
+          setStatus(`Trace ${traceId} failed.`, true);
+        }
+      }
+
+      function clearLogs() {
+        closeTraceStream();
+        state.currentTraceId = null;
+        state.gatewayProfile = resolveGatewayProfile(elements.gatewayUrl.value.trim());
+        elements.traceValue.textContent = "waiting";
+        elements.traceChip.textContent = "No active trace";
+        elements.logWindow.innerHTML = "";
+        const empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.id = "empty-state";
+        empty.textContent = "Launch a request to populate the live hop log.";
+        elements.logWindow.appendChild(empty);
+        elements.promptOutput.textContent = "No request yet.";
+        elements.promptMeta.textContent = "Idle";
+        elements.responseOutput.textContent = "The next response will appear here.";
+        elements.responseMeta.textContent = "Awaiting run";
+        setStatus("Log window cleared.");
+      }
+
+      elements.modeInvoke.addEventListener("click", () => setMode("invoke"));
+      elements.modeStream.addEventListener("click", () => setMode("stream"));
+      elements.form.addEventListener("submit", handleSubmit);
+      elements.probeButton.addEventListener("click", probeGateway);
+      elements.clearButton.addEventListener("click", clearLogs);
+      elements.gatewayUrl.addEventListener("change", () => {
+        updateSummary(elements.gatewayUrl.value.trim());
+      });
+
+      window.addEventListener("beforeunload", closeTraceStream);
+
+      setMode("invoke");
+      loadConfig().catch((error) => {
+        const text = error instanceof Error ? error.message : String(error);
+        setStatus(`Portal initialization failed: ${text}`, true);
+      });
+    </script>
+  </body>
+</html>

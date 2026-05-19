@@ -1,0 +1,64 @@
+_format_version: "3.0"
+_transform: true
+
+services:
+  - name: hosted-agent-responses
+    url: ${FOUNDRY_PROJECT_ENDPOINT}/agents/${FOUNDRY_HOSTED_AGENT_NAME}/endpoint/protocols/openai/responses
+    connect_timeout: 60000
+    write_timeout: 600000
+    read_timeout: 600000
+    routes:
+      - name: route-responses
+        paths:
+          - /responses
+        methods:
+          - POST
+          - OPTIONS
+        strip_path: true
+    plugins:
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "Authorization:Bearer ${FOUNDRY_AGENT_BEARER_TOKEN}"
+              - "Foundry-Features:HostedAgents=V1Preview,AgentEndpoints=V1Preview"
+            querystring:
+              - "api-version:${FOUNDRY_AGENT_API_VERSION}"
+
+  - name: gateway-health
+    url: http://127.0.0.1:65535/health
+    routes:
+      - name: route-health
+        paths:
+          - /health
+        methods:
+          - GET
+        strip_path: true
+    plugins:
+      - name: request-termination
+        config:
+          status_code: 200
+          content_type: application/json
+          body: |
+            {"status":"ok","gateway":"kong-azure","agent":"${FOUNDRY_HOSTED_AGENT_NAME}"}
+
+plugins:
+  - name: cors
+    config:
+      origins:
+        - "*"
+      methods:
+        - POST
+        - OPTIONS
+        - GET
+      headers:
+        - Accept
+        - Content-Type
+        - Authorization
+        - Foundry-Features
+        - X-Trace-Id
+      exposed_headers:
+        - Content-Type
+        - X-Trace-Id
+      max_age: 3600
+      preflight_continue: false

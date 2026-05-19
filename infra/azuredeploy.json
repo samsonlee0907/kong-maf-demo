@@ -1,0 +1,144 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "name": "kong-maf-demo-foundry-bootstrap",
+    "description": "Deploys the Azure AI Foundry account, project, and GPT-5.4-mini model deployment used by the Kong + MAF demo."
+  },
+  "parameters": {
+    "accountName": {
+      "type": "string",
+      "minLength": 2,
+      "metadata": {
+        "description": "Azure AI Foundry account name."
+      }
+    },
+    "projectName": {
+      "type": "string",
+      "defaultValue": "kong-maf-demo",
+      "metadata": {
+        "description": "Azure AI Foundry project name."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "eastus2",
+      "metadata": {
+        "description": "Azure region for the Foundry account and project."
+      }
+    },
+    "modelName": {
+      "type": "string",
+      "defaultValue": "gpt-5.4-mini",
+      "metadata": {
+        "description": "Foundation model name for the shared deployment."
+      }
+    },
+    "modelVersion": {
+      "type": "string",
+      "defaultValue": "2026-03-17",
+      "metadata": {
+        "description": "Foundation model version."
+      }
+    },
+    "deploymentName": {
+      "type": "string",
+      "defaultValue": "gpt-5-4-mini",
+      "metadata": {
+        "description": "Model deployment name used by the MAF agent."
+      }
+    },
+    "deploymentSku": {
+      "type": "string",
+      "defaultValue": "GlobalStandard",
+      "allowedValues": [
+        "GlobalStandard",
+        "Standard"
+      ],
+      "metadata": {
+        "description": "Deployment SKU for the model deployment."
+      }
+    },
+    "tpmCapacity": {
+      "type": "int",
+      "defaultValue": 10,
+      "minValue": 1,
+      "metadata": {
+        "description": "Model deployment capacity in thousands of tokens per minute."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2026-03-01",
+      "name": "[parameters('accountName')]",
+      "location": "[parameters('location')]",
+      "kind": "AIServices",
+      "sku": {
+        "name": "S0"
+      },
+      "properties": {
+        "allowProjectManagement": true,
+        "customSubDomainName": "[parameters('accountName')]",
+        "disableLocalAuth": false,
+        "dynamicThrottlingEnabled": false,
+        "publicNetworkAccess": "Enabled",
+        "restrictOutboundNetworkAccess": false
+      }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/projects",
+      "apiVersion": "2026-03-01",
+      "name": "[format('{0}/{1}', parameters('accountName'), parameters('projectName'))]",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "displayName": "[parameters('projectName')]",
+        "description": "Kong + MAF demo project"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2026-03-01",
+      "name": "[format('{0}/{1}', parameters('accountName'), parameters('deploymentName'))]",
+      "sku": {
+        "name": "[parameters('deploymentSku')]",
+        "capacity": "[parameters('tpmCapacity')]"
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "[parameters('modelName')]",
+          "version": "[parameters('modelVersion')]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "accountName": {
+      "type": "string",
+      "value": "[parameters('accountName')]"
+    },
+    "projectName": {
+      "type": "string",
+      "value": "[parameters('projectName')]"
+    },
+    "projectEndpoint": {
+      "type": "string",
+      "value": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('accountName'), parameters('projectName'))]"
+    },
+    "deploymentName": {
+      "type": "string",
+      "value": "[parameters('deploymentName')]"
+    }
+  }
+}

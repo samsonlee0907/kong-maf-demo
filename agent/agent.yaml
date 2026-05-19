@@ -1,0 +1,17 @@
+kind: hosted
+name: kong-maf-hosted-agent
+description: Microsoft Agent Framework demo agent hosted in Microsoft Foundry and intended to sit behind Kong Gateway.
+metadata:
+  tags:
+    - Kong
+    - Microsoft Agent Framework
+    - Foundry Hosted Agent
+protocols:
+  - protocol: responses
+    version: 1.0.0
+resources:
+  cpu: "0.5"
+  memory: 1.0Gi
+environment_variables:
+  - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+    value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
