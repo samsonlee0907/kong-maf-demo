@@ -81,19 +81,112 @@ Browser portal
   -> Foundry model runtime
 ```
 
+## Routes and What They Demonstrate
+
+The route set in this repo is intentionally split between:
+
+- browser-facing utility routes for the demo portal and trace UI
+- local adapter routes that translate plain HTTP into MAF calls
+- Azure Hosted Agent routes that preserve the native Foundry agent protocol
+
+### Local Kong routes
+
+Local Kong is configured in [kong/kong.yaml](kong/kong.yaml). In this mode, Kong is fronting the FastAPI app in [agent/server.py](agent/server.py).
+
+`GET /portal`
+
+- Demonstrates Kong as a simple edge router for a browser UI
+- Kong forwards the request to the FastAPI host, which serves `demo_portal.html`
+- This is not an agent invocation route; it exists so the same gateway can front both the UI and the agent paths
+
+`GET /ui/config`
+
+- Demonstrates that the browser can discover whether it should talk to local Kong or Azure Kong
+- The FastAPI app returns the agent name, gateway profile, trace header name, model label, and default gateway URL
+- This route is part of the control plane for the demo rather than the model data plane
+
+`GET /ui/logs/{trace_id}`
+
+- Demonstrates the local trace channel used by the portal
+- The FastAPI server keeps an in-memory event history and replays hop events as SSE
+- This is useful because Kong itself is only forwarding traffic; the FastAPI adapter emits the detailed `kong -> maf -> foundry` and return-path entries that the UI shows
+
+`POST /invoke`
+
+- Demonstrates **non-streaming via backend adapter**
+- Kong forwards a normal JSON request to FastAPI
+- FastAPI calls `agent.run(...)` on the MAF agent and waits for the full result
+- FastAPI then converts the MAF result into one JSON response for Kong to return
+- This route shows the most common enterprise integration shape: gateway at the edge, lightweight application adapter in the middle, agent runtime behind it
+
+`POST /stream`
+
+- Demonstrates **streaming via backend adapter**
+- Kong forwards the request to FastAPI, but the response stays open as `text/event-stream`
+- FastAPI calls `agent.run(..., stream=True)` and turns each MAF update into SSE frames for the browser
+- This route exists because browser-friendly SSE often needs an adapter layer even when the underlying agent runtime exposes a different streaming primitive
+- In other words, Kong is not generating the stream; it is passing through a stream produced by the FastAPI adapter
+
+`GET /health`
+
+- Demonstrates a minimal readiness route through the same Kong edge
+- This route confirms Kong can reach the upstream process and that the MAF agent can be constructed successfully
+
+### Azure Kong route
+
+Azure Kong is configured in [kong/kong.azure.template.yaml](kong/kong.azure.template.yaml). In this mode, Kong does **not** proxy to the local FastAPI adapter. It proxies directly to the Foundry Hosted Agent endpoint.
+
+`POST /responses`
+
+- Demonstrates **native Hosted Agent protocol pass-through**
+- Kong receives an OpenAI-compatible Responses API request from the browser or client
+- Kong injects the managed-identity bearer token, Foundry preview headers, and API version
+- Kong forwards the request directly to the Hosted Agent endpoint
+- The Hosted Agent runtime, started from [agent/hosted_main.py](agent/hosted_main.py), wraps the same MAF agent definition from [agent/maf_agent.py](agent/maf_agent.py)
+- Non-streaming is expressed as `"stream": false`
+- Streaming is expressed as `"stream": true`
+- This route demonstrates the cloud-native version of the architecture: Kong stays focused on gateway concerns while the Hosted Agent runtime owns the protocol-to-agent adaptation
+
+`GET /health`
+
+- Demonstrates gateway health independently of model invocation
+- In Azure this is intentionally a Kong-level synthetic response, so the gateway can prove liveness even when you do not want health checks to hit the agent path
+
 ## Streaming and Non-Streaming
 
 ### Non-streaming
 
 Local mode uses `POST /invoke` and returns one JSON payload after the MAF agent completes.
 
+The important detail is that `/invoke` is an adapter route:
+
+- Kong speaks ordinary HTTP to FastAPI
+- FastAPI speaks MAF by calling `agent.run(...)`
+- MAF speaks to the Foundry project through `FoundryChatClient`
+- The full completion is re-shaped into a simple JSON response for the caller
+
 Azure mode uses `POST /responses` with `"stream": false` and returns one complete Responses API object after the Hosted Agent finishes.
+
+In that case, there is no custom FastAPI adapter in the path. Kong is proxying the request directly into the Hosted Agent protocol surface.
 
 ### Streaming
 
 Local mode uses `POST /stream` and returns server-sent events from the FastAPI host.
 
+That route is a practical streaming adapter:
+
+- the browser sends one HTTP request
+- FastAPI opens `agent.run(..., stream=True)`
+- every partial MAF update is converted into SSE `event` and `data` frames
+- Kong forwards those frames incrementally as long as buffering stays disabled
+
 Azure mode uses `POST /responses` with `"stream": true` and forwards Hosted Agent Responses API SSE events through Kong.
+
+That means the Azure path is slightly different from the local one:
+
+- local streaming is **custom backend adaptation**
+- Azure streaming is **protocol pass-through to a Hosted Agent**
+- both still rely on Kong preserving incremental delivery rather than buffering the response
 
 The two important gateway behaviors are:
 
