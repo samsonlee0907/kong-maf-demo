@@ -17,6 +17,8 @@ export FOUNDRY_AGENT_API_VERSION="${FOUNDRY_AGENT_API_VERSION:-v1}"
 refresh_seconds="${TOKEN_REFRESH_SECONDS:-2400}"
 rendered_config="${KONG_DECLARATIVE_CONFIG:-/tmp/kong.azure.yaml}"
 template_file="/config/kong.azure.template.yaml"
+kong_prefix="${KONG_PREFIX:-/usr/local/kong}"
+kong_runtime_conf="${KONG_RUNTIME_CONF:-${kong_prefix}/kong.conf}"
 
 refresh_token() {
   if [[ -z "${IDENTITY_ENDPOINT:-}" || -z "${IDENTITY_HEADER:-}" ]]; then
@@ -45,7 +47,7 @@ refresh_token
   while true; do
     sleep "${refresh_seconds}"
     refresh_token
-    kong reload -c /etc/kong/kong.conf || true
+    kong reload -p "${kong_prefix}" -c "${kong_runtime_conf}" || true
   done
 ) &
 

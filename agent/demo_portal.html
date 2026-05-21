@@ -135,6 +135,7 @@
         display: grid;
         grid-template-columns: minmax(320px, 560px) minmax(320px, 1fr);
         gap: 18px;
+        align-items: start;
       }
 
       .panel {
@@ -330,6 +331,18 @@
         white-space: pre-wrap;
         line-height: 1.62;
         min-height: 52px;
+        max-height: min(42vh, 420px);
+        overflow: auto;
+        overscroll-behavior: contain;
+        padding-right: 6px;
+      }
+
+      #prompt-output {
+        max-height: min(22vh, 220px);
+      }
+
+      #response-output {
+        max-height: min(46vh, 520px);
       }
 
       .log-meta {
@@ -352,7 +365,9 @@
 
       .log-window {
         min-height: 0;
+        max-height: min(72vh, 920px);
         overflow: auto;
+        overscroll-behavior: contain;
         border-radius: 20px;
         border: 1px solid rgba(255, 255, 255, 0.08);
         background:
@@ -619,7 +634,10 @@
         traceSource: null,
         currentTraceId: null,
         gatewayProfile: "local-maf",
+        logEntries: new Map(),
       };
+
+      const MAX_LOG_ENTRIES = 140;
 
       const elements = {
         form: document.getElementById("chat-form"),
@@ -676,38 +694,77 @@
         }
       }
 
-      function addLog(entry) {
-        ensureLogWindowReady();
-        const item = document.createElement("article");
+      function renderLogEntry(item, entry) {
         item.className = `log-entry ${entry.level || "info"}`;
 
-        const top = document.createElement("div");
-        top.className = "log-top";
+        let top = item.querySelector(".log-top");
+        if (!top) {
+          top = document.createElement("div");
+          top.className = "log-top";
+          item.appendChild(top);
+        }
+
         top.innerHTML = `
           <span class="hop">#${entry.index || "?"} ${entry.source} -> ${entry.target}</span>
           <span class="stamp">${nowStamp(entry.ts)}</span>
         `;
 
-        const body = document.createElement("div");
-        body.className = "log-message";
+        let body = item.querySelector(".log-message");
+        if (!body) {
+          body = document.createElement("div");
+          body.className = "log-message";
+          item.appendChild(body);
+        }
         body.textContent = entry.message;
 
-        item.appendChild(top);
-        item.appendChild(body);
-
         const detail = sanitizeDetail(entry.detail);
+        let meta = item.querySelector(".log-detail");
         if (detail) {
-          const meta = document.createElement("div");
-          meta.className = "log-detail";
+          if (!meta) {
+            meta = document.createElement("div");
+            meta.className = "log-detail";
+            item.appendChild(meta);
+          }
           meta.textContent = detail;
-          item.appendChild(meta);
+        } else if (meta) {
+          meta.remove();
+        }
+      }
+
+      function pruneLogWindow() {
+        while (elements.logWindow.childElementCount > MAX_LOG_ENTRIES) {
+          const first = elements.logWindow.firstElementChild;
+          if (!first) {
+            return;
+          }
+
+          const key = first.dataset.logKey;
+          if (key) {
+            state.logEntries.delete(key);
+          }
+          first.remove();
+        }
+      }
+
+      function addLog(entry, key = null) {
+        ensureLogWindowReady();
+        let item = key ? state.logEntries.get(key) : null;
+
+        if (!item) {
+          item = document.createElement("article");
+          if (key) {
+            item.dataset.logKey = key;
+            state.logEntries.set(key, item);
+          }
+          elements.logWindow.appendChild(item);
         }
 
-        elements.logWindow.appendChild(item);
+        renderLogEntry(item, entry);
+        pruneLogWindow();
         elements.logWindow.scrollTop = elements.logWindow.scrollHeight;
       }
 
-      function addClientLog(source, target, message, detail = {}, level = "info") {
+      function addClientLog(source, target, message, detail = {}, level = "info", key = null) {
         addLog({
           ts: new Date().toISOString(),
           source,
@@ -716,7 +773,23 @@
           detail,
           level,
           index: "ui",
-        });
+        }, key);
+      }
+
+      function appendResponseText(chunk) {
+        elements.responseOutput.textContent += chunk;
+        elements.responseOutput.scrollTop = elements.responseOutput.scrollHeight;
+      }
+
+      function updateStreamingProgress(traceId, source, target, detail, message) {
+        addClientLog(
+          source,
+          target,
+          message,
+          detail,
+          "info",
+          `${traceId}-stream-progress`
+        );
       }
 
       function setStatus(text, highlight = false) {
@@ -901,6 +974,25 @@
         };
       }
 
+      async function readResponsePayload(response) {
+        const rawText = await response.text();
+        let json = null;
+
+        if (rawText.trim()) {
+          try {
+            json = JSON.parse(rawText);
+          } catch {
+            json = null;
+          }
+        }
+
+        return {
+          rawText,
+          json,
+          contentType: response.headers.get("content-type") || "",
+        };
+      }
+
       function extractResponsesText(payload) {
         if (!payload || !Array.isArray(payload.output)) {
           return "";
@@ -943,12 +1035,15 @@
           body: JSON.stringify({ input: message, stream: false }),
         });
 
-        const payload = await response.json();
+        const payloadEnvelope = await readResponsePayload(response);
+        const payload = payloadEnvelope.json || {};
         const text = extractResponsesText(payload);
         const agentReference = summarizeAgentReference(payload);
 
         addClientLog("kong", "hosted-agent", "Azure Kong proxied the Responses request to the Foundry Hosted Agent.", {
           status: response.status,
+          content_type: payloadEnvelope.contentType || "unknown",
+          response_preview: trimText(payloadEnvelope.rawText || "<empty response>", 220),
           trace_id: traceId,
           ...agentReference,
         }, response.ok ? "info" : "error");
@@ -968,16 +1063,23 @@
 
         addClientLog("kong", "ui", "Azure Kong returned the Hosted Agent response to the browser.", {
           status: response.status,
+          content_type: payloadEnvelope.contentType || "unknown",
           trace_id: traceId,
           ...agentReference,
         }, response.ok ? "info" : "error");
 
         if (!response.ok) {
-          throw new Error(payload.detail || payload.error?.message || `Gateway returned ${response.status}`);
+          throw new Error(
+            payload.detail ||
+              payload.error?.message ||
+              payloadEnvelope.rawText ||
+              `Gateway returned ${response.status} with an empty response body`
+          );
         }
 
         elements.responseMeta.textContent = `Completed at ${nowStamp()}`;
-        elements.responseOutput.textContent = text || JSON.stringify(payload, null, 2);
+        elements.responseOutput.textContent =
+          text || payloadEnvelope.rawText || JSON.stringify(payload, null, 2);
       }
 
       async function runHostedStream(gatewayUrl, message, traceId) {
@@ -1009,6 +1111,7 @@
 
         let upstreamAnnounced = false;
         let firstDeltaLogged = false;
+        let chunkCount = 0;
 
         await parseSseResponse(response, (packet) => {
           const payload = JSON.parse(packet.data);
@@ -1030,7 +1133,8 @@
 
           if (packet.event === "response.output_text.delta") {
             const chunk = payload.delta || "";
-            elements.responseOutput.textContent += chunk;
+            appendResponseText(chunk);
+            chunkCount += chunk ? 1 : 0;
 
             if (!upstreamAnnounced) {
               addClientLog("kong", "hosted-agent", "Azure Kong forwarded the streaming request to the Foundry Hosted Agent.", {
@@ -1056,16 +1160,35 @@
             }
 
             if (chunk) {
-              addClientLog("kong", "ui", "The browser received a streamed chunk from Azure Kong.", {
-                sequence_number: payload.sequence_number,
-                chunk,
-              });
+              updateStreamingProgress(
+                traceId,
+                "kong",
+                "ui",
+                {
+                  chunks_received: chunkCount,
+                  characters_received: elements.responseOutput.textContent.length,
+                  latest_chunk_preview: trimText(chunk, 96),
+                  sequence_number: payload.sequence_number,
+                },
+                "The browser is receiving streamed text from Azure Kong."
+              );
             }
             return;
           }
 
           if (packet.event === "response.completed") {
             elements.responseMeta.textContent = `Stream complete at ${nowStamp()}`;
+            updateStreamingProgress(
+              traceId,
+              "kong",
+              "ui",
+              {
+                chunks_received: chunkCount,
+                characters_received: elements.responseOutput.textContent.length,
+                status: "complete",
+              },
+              "The browser finished receiving the streamed response from Azure Kong."
+            );
             addClientLog("hosted-agent", "kong", "The Hosted Agent completed the streaming response back to Kong.", agentReference);
             addClientLog("kong", "ui", "Azure Kong closed the Hosted Agent stream back to the browser.", {
               trace_id: traceId,
@@ -1099,18 +1222,27 @@
           body: JSON.stringify({ message }),
         });
 
+        const payloadEnvelope = await readResponsePayload(response);
+        const payload = payloadEnvelope.json || {};
+
         addClientLog("kong", "ui", "Kong returned the JSON response to the browser.", {
           status: response.status,
+          content_type: payloadEnvelope.contentType || "unknown",
           trace_id: response.headers.get("x-trace-id") || traceId,
         }, response.ok ? "info" : "error");
 
-        const payload = await response.json();
         if (!response.ok) {
-          throw new Error(payload.detail || `Gateway returned ${response.status}`);
+          throw new Error(
+            payload.detail ||
+              payload.error?.message ||
+              payloadEnvelope.rawText ||
+              `Gateway returned ${response.status} with an empty response body`
+          );
         }
 
         elements.responseMeta.textContent = `Completed at ${nowStamp()}`;
-        elements.responseOutput.textContent = payload.output || JSON.stringify(payload, null, 2);
+        elements.responseOutput.textContent =
+          payload.output || payloadEnvelope.rawText || JSON.stringify(payload, null, 2);
       }
 
       async function runStream(gatewayUrl, message, traceId) {
@@ -1143,20 +1275,41 @@
 
         elements.responseOutput.textContent = "";
         elements.responseMeta.textContent = "Streaming";
+        let chunkCount = 0;
 
         await parseSseResponse(response, (packet) => {
           const payload = JSON.parse(packet.data);
           if (packet.event === "token") {
-            elements.responseOutput.textContent += payload.chunk;
-            addClientLog("kong", "ui", "The browser received a streamed chunk from Kong.", {
-              index: payload.index,
-              chunk: payload.chunk,
-            });
+            appendResponseText(payload.chunk);
+            chunkCount += payload.chunk ? 1 : 0;
+            updateStreamingProgress(
+              traceId,
+              "kong",
+              "ui",
+              {
+                chunks_received: chunkCount,
+                characters_received: elements.responseOutput.textContent.length,
+                latest_chunk_preview: trimText(payload.chunk, 96),
+                index: payload.index,
+              },
+              "The browser is receiving streamed text from Kong."
+            );
             return;
           }
 
           if (packet.event === "done") {
             elements.responseMeta.textContent = `Stream complete at ${nowStamp()}`;
+            updateStreamingProgress(
+              traceId,
+              "kong",
+              "ui",
+              {
+                chunks_received: chunkCount,
+                characters_received: elements.responseOutput.textContent.length,
+                status: "complete",
+              },
+              "The browser finished receiving the streamed response from Kong."
+            );
             addClientLog("kong", "ui", "Kong closed the SSE stream back to the browser.", payload);
             return;
           }
@@ -1174,7 +1327,10 @@
         try {
           setStatus("Probing gateway health.");
           const response = await fetch(new URL("/health", gatewayUrl));
-          const payload = await response.json();
+          const payloadEnvelope = await readResponsePayload(response);
+          const payload = payloadEnvelope.json || {
+            detail: payloadEnvelope.rawText || "<empty response>",
+          };
           addClientLog("ui", "kong", "Health probe sent to the gateway.", {
             endpoint: new URL("/health", gatewayUrl).toString(),
           });
@@ -1234,6 +1390,7 @@
         elements.traceValue.textContent = "waiting";
         elements.traceChip.textContent = "No active trace";
         elements.logWindow.innerHTML = "";
+        state.logEntries.clear();
         const empty = document.createElement("div");
         empty.className = "empty-state";
         empty.id = "empty-state";
