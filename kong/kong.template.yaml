@@ -3,7 +3,7 @@ _transform: true
 
 services:
   - name: maf-agent-ui
-    url: http://host.docker.internal:8080
+    url: http://host.docker.internal:__AGENT_UPSTREAM_PORT__
     connect_timeout: 60000
     write_timeout: 60000
     read_timeout: 60000
@@ -22,7 +22,7 @@ services:
         strip_path: false
 
   - name: maf-agent-invoke
-    url: http://host.docker.internal:8080/invoke
+    url: http://host.docker.internal:__AGENT_UPSTREAM_PORT__/invoke
     connect_timeout: 60000
     write_timeout: 60000
     read_timeout: 60000
@@ -36,7 +36,7 @@ services:
         strip_path: true
 
   - name: maf-agent-stream
-    url: http://host.docker.internal:8080/stream
+    url: http://host.docker.internal:__AGENT_UPSTREAM_PORT__/stream
     connect_timeout: 60000
     write_timeout: 600000
     read_timeout: 600000
@@ -50,7 +50,7 @@ services:
         strip_path: true
 
   - name: maf-agent-health
-    url: http://host.docker.internal:8080/health
+    url: http://host.docker.internal:__AGENT_UPSTREAM_PORT__/health
     connect_timeout: 60000
     write_timeout: 60000
     read_timeout: 60000

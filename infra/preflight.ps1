@@ -122,6 +122,13 @@ if ($Mode -in @("local", "all")) {
         }
 
         try {
+            $null = (& docker info 2>&1)
+            Write-Pass "Docker daemon is reachable."
+        } catch {
+            Write-Fail "Docker Desktop is installed but the Docker daemon is not ready. Start Docker Desktop and retry."
+        }
+
+        try {
             $composeVersion = (& docker compose version 2>&1).Trim()
             Write-Pass $composeVersion
         } catch {
@@ -185,7 +192,7 @@ switch ($Mode) {
     "local" {
         Write-Host "Next steps:"
         Write-Host "  1. Start the FastAPI host from '.\\agent'"
-        Write-Host "  2. Start Docker Compose from '.\\kong'"
+        Write-Host "  2. Render and start local Kong with '.\\kong\\start-local-kong.ps1 -AgentPort <your FastAPI port>'"
         Write-Host "  3. Run '.\\tests\\test_both.ps1'"
     }
     "cloud" {
@@ -197,6 +204,6 @@ switch ($Mode) {
     default {
         Write-Host "Next steps:"
         Write-Host "  1. Validate the cloud path with 'python .\\tests\\test_cloud_gateway.py'"
-        Write-Host "  2. Validate the local path with '.\\tests\\test_both.ps1'"
+        Write-Host "  2. Validate the local path with '.\\tests\\test_both.ps1' after starting local Kong with '.\\kong\\start-local-kong.ps1'"
     }
 }

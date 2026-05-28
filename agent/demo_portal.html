@@ -533,10 +533,11 @@
                 <div class="subtle">Route Mode</div>
                 <div class="mode-switch" role="tablist" aria-label="Gateway profile">
                   <button id="profile-cloud" type="button">Cloud Gateway</button>
-                  <button id="profile-local" type="button">Local Preview</button>
+                  <button id="profile-kong" type="button">Local Kong</button>
+                  <button id="profile-local" type="button">Direct Preview</button>
                 </div>
                 <div class="subtle" id="profile-note">
-                  Choose whether the browser should call Azure Kong or the local FastAPI preview path.
+                  Choose whether the browser should call Azure Kong, local Kong, or the FastAPI preview path directly.
                 </div>
               </div>
             </div>
@@ -670,6 +671,7 @@
         probeButton: document.getElementById("probe-button"),
         clearButton: document.getElementById("clear-button"),
         profileCloud: document.getElementById("profile-cloud"),
+        profileKong: document.getElementById("profile-kong"),
         profileLocal: document.getElementById("profile-local"),
         profileNote: document.getElementById("profile-note"),
         servedFrom: document.getElementById("served-from"),
@@ -841,30 +843,75 @@
       function resolveGatewayProfile(gatewayUrl) {
         const normalizedGateway = normalizeUrl(gatewayUrl);
         const normalizedAzure = normalizeUrl(state.config?.azureGatewayUrl);
+        const normalizedLocalKong = normalizeUrl(
+          state.config?.localKongUrl || state.config?.kongGatewayUrl
+        );
+        const normalizedDirectPreview = normalizeUrl(
+          state.config?.directPreviewUrl || state.config?.localGatewayUrl
+        );
         if (normalizedAzure && normalizedGateway === normalizedAzure) {
           return "azure-hosted";
         }
         if (/azurecontainerapps\.io$/i.test(normalizedGateway)) {
           return "azure-hosted";
         }
-        return "local-maf";
+        if (normalizedLocalKong && normalizedGateway === normalizedLocalKong) {
+          return "local-kong";
+        }
+        if (normalizedDirectPreview && normalizedGateway === normalizedDirectPreview) {
+          return "direct-preview";
+        }
+        if (/:(8000)(\/)?$/i.test(normalizedGateway)) {
+          return "local-kong";
+        }
+        return "direct-preview";
       }
 
       function describeGatewayProfile(profile) {
         if (profile === "azure-hosted") {
           return "Cloud Gateway";
         }
-        return "Local Preview";
+        if (profile === "local-kong") {
+          return "Local Kong";
+        }
+        return "Direct Preview";
+      }
+
+      function localKongMismatchMessage(gatewayUrl) {
+        return `Local Kong is not available on ${normalizeUrl(gatewayUrl)}. Start Kong on that port, or switch to Direct Preview or Cloud Gateway.`;
+      }
+
+      function explainInvokeFailure(gatewayUrl, response, payloadEnvelope, payload) {
+        if (state.gatewayProfile === "local-kong" && response.status === 404) {
+          return localKongMismatchMessage(gatewayUrl);
+        }
+
+        return (
+          payload.detail ||
+          payload.error?.message ||
+          payloadEnvelope.rawText ||
+          `Gateway returned ${response.status} with an empty response body`
+        );
       }
 
       function syncGatewayProfileControls() {
         const isAzure = state.gatewayProfile === "azure-hosted";
+        const isLocalKong = state.gatewayProfile === "local-kong";
+        const isDirectPreview = state.gatewayProfile === "direct-preview";
         elements.profileCloud.classList.toggle("active", isAzure);
-        elements.profileLocal.classList.toggle("active", !isAzure);
+        elements.profileKong.classList.toggle("active", isLocalKong);
+        elements.profileLocal.classList.toggle("active", isDirectPreview);
         elements.pathValue.textContent = describeGatewayProfile(state.gatewayProfile);
-        elements.profileNote.textContent = isAzure
-          ? "Browser requests go through Azure Kong, which injects managed-identity auth before forwarding to the Foundry Hosted Agent."
-          : "Browser requests stay local and call the FastAPI adapter directly. This is the safe preview and troubleshooting path.";
+        if (isAzure) {
+          elements.profileNote.textContent =
+            "Browser requests go through Azure Kong, which injects managed-identity auth before forwarding to the Foundry Hosted Agent.";
+        } else if (isLocalKong) {
+          elements.profileNote.textContent =
+            "Browser requests go through the local Kong gateway on :8000 before reaching the FastAPI adapter.";
+        } else {
+          elements.profileNote.textContent =
+            "Browser requests bypass Kong and call the FastAPI adapter directly. This is the safe preview and troubleshooting path.";
+        }
       }
 
       function applyGatewayProfile(gatewayUrl) {
@@ -893,7 +940,9 @@
         const target =
           profile === "azure-hosted"
             ? state.config?.azureGatewayUrl
-            : state.config?.localGatewayUrl || window.location.origin;
+            : profile === "local-kong"
+              ? state.config?.localKongUrl || state.config?.kongGatewayUrl
+              : state.config?.directPreviewUrl || state.config?.localGatewayUrl || window.location.origin;
 
         if (!target) {
           setStatus(`No configured URL is available for ${describeGatewayProfile(profile)}.`, true);
@@ -917,9 +966,13 @@
           setStatus(
             `Portal ready in Cloud Gateway mode. Requests will use ${elements.gatewayUrl.value} through Azure Kong and the Foundry Hosted Agent.`
           );
+        } else if (state.gatewayProfile === "local-kong") {
+          setStatus(
+            `Portal ready in Local Kong mode. Requests will use ${elements.gatewayUrl.value} through local Kong before reaching FastAPI.`
+          );
         } else if (state.config.portalMode === "direct-preview") {
           setStatus(
-            `Portal ready in Local Preview mode. Requests will use ${elements.gatewayUrl.value} until you switch back to Cloud Gateway.`
+            `Portal ready in Direct Preview mode. Requests will call ${elements.gatewayUrl.value} directly until you switch paths.`
           );
         } else {
           setStatus("Portal ready. Send a request to open a traced session.");
@@ -1266,16 +1319,24 @@
       }
 
       async function runInvoke(gatewayUrl, message, traceId) {
+        const edgeLabel = state.gatewayProfile === "local-kong" ? "kong" : "direct-preview";
         if (state.gatewayProfile === "azure-hosted") {
           await runHostedInvoke(gatewayUrl, message, traceId);
           return;
         }
 
         const target = new URL("/invoke", gatewayUrl).toString();
-        addClientLog("ui", "kong", "The browser dispatched a JSON request to Kong.", {
+        addClientLog(
+          "ui",
+          edgeLabel,
+          state.gatewayProfile === "local-kong"
+            ? "The browser dispatched a JSON request to local Kong."
+            : "The browser dispatched a JSON request directly to the FastAPI adapter.",
+          {
           endpoint: target,
           trace_id: traceId,
-        });
+          }
+        );
 
         const response = await fetch(target, {
           method: "POST",
@@ -1286,19 +1347,16 @@
         const payloadEnvelope = await readResponsePayload(response);
         const payload = payloadEnvelope.json || {};
 
-        addClientLog("kong", "ui", "Kong returned the JSON response to the browser.", {
+        addClientLog(edgeLabel, "ui", state.gatewayProfile === "local-kong"
+          ? "Local Kong returned the JSON response to the browser."
+          : "The FastAPI adapter returned the JSON response directly to the browser.", {
           status: response.status,
           content_type: payloadEnvelope.contentType || "unknown",
           trace_id: response.headers.get("x-trace-id") || traceId,
         }, response.ok ? "info" : "error");
 
         if (!response.ok) {
-          throw new Error(
-            payload.detail ||
-              payload.error?.message ||
-              payloadEnvelope.rawText ||
-              `Gateway returned ${response.status} with an empty response body`
-          );
+          throw new Error(explainInvokeFailure(gatewayUrl, response, payloadEnvelope, payload));
         }
 
         elements.responseMeta.textContent = `Completed at ${nowStamp()}`;
@@ -1307,16 +1365,24 @@
       }
 
       async function runStream(gatewayUrl, message, traceId) {
+        const edgeLabel = state.gatewayProfile === "local-kong" ? "kong" : "direct-preview";
         if (state.gatewayProfile === "azure-hosted") {
           await runHostedStream(gatewayUrl, message, traceId);
           return;
         }
 
         const target = new URL("/stream", gatewayUrl).toString();
-        addClientLog("ui", "kong", "The browser opened an SSE request through Kong.", {
+        addClientLog(
+          "ui",
+          edgeLabel,
+          state.gatewayProfile === "local-kong"
+            ? "The browser opened an SSE request through local Kong."
+            : "The browser opened an SSE request directly on the FastAPI adapter.",
+          {
           endpoint: target,
           trace_id: traceId,
-        });
+          }
+        );
 
         const response = await fetch(target, {
           method: "POST",
@@ -1324,13 +1390,18 @@
           body: JSON.stringify({ message }),
         });
 
-        addClientLog("kong", "ui", "Kong accepted the streaming request and started the SSE response.", {
+        addClientLog(edgeLabel, "ui", state.gatewayProfile === "local-kong"
+          ? "Local Kong accepted the streaming request and started the SSE response."
+          : "The FastAPI adapter accepted the streaming request and started the SSE response.", {
           status: response.status,
           trace_id: response.headers.get("x-trace-id") || traceId,
         }, response.ok ? "info" : "error");
 
         if (!response.ok || !response.body) {
           const detail = await response.text();
+          if (state.gatewayProfile === "local-kong" && response.status === 404) {
+            throw new Error(localKongMismatchMessage(gatewayUrl));
+          }
           throw new Error(detail || `Gateway returned ${response.status}`);
         }
 
@@ -1345,7 +1416,7 @@
             chunkCount += payload.chunk ? 1 : 0;
             updateStreamingProgress(
               traceId,
-              "kong",
+              edgeLabel,
               "ui",
               {
                 chunks_received: chunkCount,
@@ -1353,7 +1424,9 @@
                 latest_chunk_preview: trimText(payload.chunk, 96),
                 index: payload.index,
               },
-              "The browser is receiving streamed text from Kong."
+              state.gatewayProfile === "local-kong"
+                ? "The browser is receiving streamed text from local Kong."
+                : "The browser is receiving streamed text directly from the FastAPI adapter."
             );
             return;
           }
@@ -1362,21 +1435,30 @@
             elements.responseMeta.textContent = `Stream complete at ${nowStamp()}`;
             updateStreamingProgress(
               traceId,
-              "kong",
+              edgeLabel,
               "ui",
               {
                 chunks_received: chunkCount,
                 characters_received: elements.responseOutput.textContent.length,
                 status: "complete",
               },
-              "The browser finished receiving the streamed response from Kong."
+              state.gatewayProfile === "local-kong"
+                ? "The browser finished receiving the streamed response from local Kong."
+                : "The browser finished receiving the streamed response from the FastAPI adapter."
             );
-            addClientLog("kong", "ui", "Kong closed the SSE stream back to the browser.", payload);
+            addClientLog(
+              edgeLabel,
+              "ui",
+              state.gatewayProfile === "local-kong"
+                ? "Local Kong closed the SSE stream back to the browser."
+                : "The FastAPI adapter closed the SSE stream back to the browser.",
+              payload
+            );
             return;
           }
 
           if (packet.event === "error") {
-            addClientLog("kong", "ui", "The SSE stream returned an error event.", payload, "error");
+            addClientLog(edgeLabel, "ui", "The SSE stream returned an error event.", payload, "error");
             throw new Error(payload.detail || payload.status || "Unknown stream error");
           }
         });
@@ -1384,6 +1466,12 @@
 
       async function probeGateway() {
         const gatewayUrl = elements.gatewayUrl.value.trim();
+        const edgeLabel =
+          state.gatewayProfile === "azure-hosted"
+            ? "kong"
+            : state.gatewayProfile === "local-kong"
+              ? "kong"
+              : "direct-preview";
         updateSummary(gatewayUrl);
         try {
           setStatus("Probing gateway health.");
@@ -1392,14 +1480,22 @@
           const payload = payloadEnvelope.json || {
             detail: payloadEnvelope.rawText || "<empty response>",
           };
-          addClientLog("ui", "kong", "Health probe sent to the gateway.", {
+          addClientLog("ui", edgeLabel, state.gatewayProfile === "direct-preview"
+            ? "Health probe sent directly to the FastAPI adapter."
+            : "Health probe sent to the gateway.", {
             endpoint: new URL("/health", gatewayUrl).toString(),
           });
-          addClientLog("kong", "ui", "Gateway health probe returned to the browser.", payload, response.ok ? "info" : "warning");
+          addClientLog(edgeLabel, "ui", state.gatewayProfile === "direct-preview"
+            ? "The direct preview health probe returned to the browser."
+            : "Gateway health probe returned to the browser.", payload, response.ok ? "info" : "warning");
           elements.probeValue.textContent = response.ok ? `Healthy ${nowStamp()}` : `Unhealthy ${nowStamp()}`;
-          setStatus("Gateway probe finished.");
+          if (!response.ok && state.gatewayProfile === "local-kong" && response.status === 404) {
+            setStatus(localKongMismatchMessage(gatewayUrl), true);
+          } else {
+            setStatus("Gateway probe finished.");
+          }
         } catch (error) {
-          addClientLog("kong", "ui", "Gateway probe failed in the browser.", { error: String(error) }, "error");
+          addClientLog(edgeLabel, "ui", "Gateway probe failed in the browser.", { error: String(error) }, "error");
           elements.probeValue.textContent = `Failed ${nowStamp()}`;
           setStatus("Gateway probe failed.", true);
         }
@@ -1424,7 +1520,7 @@
 
         openTraceStream(traceId);
         setStatus(
-          `Running ${state.mode === "stream" ? "SSE" : "non-SSE"} flow with trace ${traceId} via ${state.gatewayProfile === "azure-hosted" ? "Azure Kong + Hosted Agent" : "local Kong + FastAPI MAF"}.`
+          `Running ${state.mode === "stream" ? "SSE" : "non-SSE"} flow with trace ${traceId} via ${state.gatewayProfile === "azure-hosted" ? "Azure Kong + Hosted Agent" : state.gatewayProfile === "local-kong" ? "Local Kong + FastAPI MAF" : "Direct Preview + FastAPI MAF"}.`
         );
 
         try {
@@ -1468,7 +1564,8 @@
       }
 
       elements.profileCloud.addEventListener("click", () => chooseGatewayProfile("azure-hosted"));
-      elements.profileLocal.addEventListener("click", () => chooseGatewayProfile("local-maf"));
+      elements.profileKong.addEventListener("click", () => chooseGatewayProfile("local-kong"));
+      elements.profileLocal.addEventListener("click", () => chooseGatewayProfile("direct-preview"));
       elements.modeInvoke.addEventListener("click", () => setMode("invoke"));
       elements.modeStream.addEventListener("click", () => setMode("stream"));
       elements.form.addEventListener("submit", handleSubmit);

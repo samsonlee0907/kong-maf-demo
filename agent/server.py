@@ -37,6 +37,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("kong-maf-demo")
 
 PORTAL_FILE = Path(__file__).with_name("demo_portal.html")
+AGENT_PORT = int(os.getenv("AGENT_PORT", "8080"))
 LOCAL_GATEWAY_URL = os.getenv("KONG_GATEWAY_URL", "http://127.0.0.1:8000")
 AZURE_GATEWAY_URL = os.getenv(
     "AZURE_KONG_GATEWAY_URL",
@@ -127,6 +128,22 @@ def _extract_trace_id(request: Request) -> str:
     return incoming or _make_trace_id()
 
 
+def _direct_preview_url(request: Request) -> str:
+    explicit = os.getenv("DIRECT_PREVIEW_URL", "").strip()
+    if explicit:
+        return explicit
+    return f"{request.url.scheme}://127.0.0.1:{AGENT_PORT}"
+
+
+def _local_edge_profile(request: Request) -> str:
+    request_port = request.url.port
+    return "direct-preview" if request_port not in (80, 443, 8000) else "kong"
+
+
+def _local_edge_label(profile: str) -> str:
+    return "Direct Preview" if profile == "direct-preview" else "Kong"
+
+
 def _trim_text(value: str, limit: int = 160) -> str:
     compact = " ".join(value.split())
     if len(compact) <= limit:
@@ -202,9 +219,14 @@ async def ui_config(request: Request) -> JSONResponse:
     served_from = str(request.base_url).rstrip("/")
     request_port = request.url.port
     direct_preview_mode = request_port not in (80, 443, 8000)
-    local_preview_url = served_from if direct_preview_mode else LOCAL_GATEWAY_URL
+    direct_preview_url = served_from if direct_preview_mode else _direct_preview_url(request)
     use_azure_profile = DEFAULT_GATEWAY_PROFILE == "azure-hosted" and bool(AZURE_GATEWAY_URL)
-    default_gateway_url = AZURE_GATEWAY_URL if use_azure_profile else local_preview_url
+    default_gateway_url = AZURE_GATEWAY_URL if use_azure_profile else direct_preview_url
+    default_gateway_profile = (
+        "azure-hosted"
+        if use_azure_profile
+        else ("direct-preview" if direct_preview_mode else "local-kong")
+    )
 
     try:
         local_agent_name = get_agent().name
@@ -220,8 +242,10 @@ async def ui_config(request: Request) -> JSONResponse:
             "localAgentName": local_agent_name,
             "azureHostedAgentName": AZURE_HOSTED_AGENT_NAME,
             "defaultGatewayUrl": default_gateway_url,
-            "defaultGatewayProfile": "azure-hosted" if use_azure_profile else "local-maf",
-            "localGatewayUrl": local_preview_url,
+            "defaultGatewayProfile": default_gateway_profile,
+            "localGatewayUrl": direct_preview_url,
+            "directPreviewUrl": direct_preview_url,
+            "localKongUrl": LOCAL_GATEWAY_URL,
             "azureGatewayUrl": AZURE_GATEWAY_URL,
             "servedFrom": served_from,
             "traceHeader": "X-Trace-Id",
@@ -295,13 +319,19 @@ async def health() -> JSONResponse:
 @app.post("/invoke")
 async def invoke(request: Request, req: ChatRequest) -> JSONResponse:
     trace_id = _extract_trace_id(request)
+    edge_profile = _local_edge_profile(request)
+    edge_label = _local_edge_label(edge_profile)
 
     await _publish_trace(
         trace_id,
-        source="kong",
+        source=edge_profile,
         target="maf",
         hop="gateway-to-maf",
-        message="Kong forwarded POST /invoke to the MAF server.",
+        message=(
+            "Kong forwarded POST /invoke to the MAF server."
+            if edge_profile == "kong"
+            else "The browser called POST /invoke directly on the MAF server."
+        ),
         detail={"path": "/invoke", "mode": "non-sse", "prompt": req.message},
     )
 
@@ -322,9 +352,9 @@ async def invoke(request: Request, req: ChatRequest) -> JSONResponse:
         await _publish_trace(
             trace_id,
             source="maf",
-            target="kong",
+            target=edge_profile,
             hop="invoke-error",
-            message="The MAF server failed before invoking Foundry.",
+            message=f"The MAF server failed before returning to {edge_label}.",
             detail={"error": str(exc)},
             level="error",
         )
@@ -334,7 +364,7 @@ async def invoke(request: Request, req: ChatRequest) -> JSONResponse:
         await _publish_trace(
             trace_id,
             source="maf",
-            target="kong",
+            target=edge_profile,
             hop="invoke-error",
             message="The MAF server hit an error while handling /invoke.",
             detail={"error": str(exc)},
@@ -353,9 +383,13 @@ async def invoke(request: Request, req: ChatRequest) -> JSONResponse:
     await _publish_trace(
         trace_id,
         source="maf",
-        target="kong",
+        target=edge_profile,
         hop="maf-to-kong",
-        message="FastAPI returned the JSON payload back to Kong.",
+        message=(
+            "FastAPI returned the JSON payload back to Kong."
+            if edge_profile == "kong"
+            else "FastAPI returned the JSON payload directly to the browser."
+        ),
         detail={"status_code": 200, "mode": "non-sse"},
     )
 
@@ -375,6 +409,8 @@ async def stream_generator(
 ) -> AsyncGenerator[dict[str, str], None]:
     token_count = 0
     full_text_parts: list[str] = []
+    edge_profile = _local_edge_profile(request)
+    edge_label = _local_edge_label(edge_profile)
 
     logger.info("stream request received: %s", message)
     await _publish_trace(
@@ -391,10 +427,10 @@ async def stream_generator(
             if await request.is_disconnected():
                 await _publish_trace(
                     trace_id,
-                    source="kong",
+                    source=edge_profile,
                     target="maf",
                     hop="client-disconnect",
-                    message="The downstream client disconnected before the stream finished.",
+                    message=f"The downstream client disconnected before {edge_label} finished the stream.",
                     detail={"tokens_forwarded": token_count},
                     level="warning",
                 )
@@ -422,9 +458,13 @@ async def stream_generator(
             await _publish_trace(
                 trace_id,
                 source="maf",
-                target="kong",
+                target=edge_profile,
                 hop="maf-to-kong-stream",
-                message="FastAPI forwarded the chunk to Kong as SSE.",
+                message=(
+                    "FastAPI forwarded the chunk to Kong as SSE."
+                    if edge_profile == "kong"
+                    else "FastAPI streamed the chunk directly to the browser."
+                ),
                 detail=chunk_detail,
             )
 
@@ -437,9 +477,9 @@ async def stream_generator(
         await _publish_trace(
             trace_id,
             source="maf",
-            target="kong",
+            target=edge_profile,
             hop="stream-error",
-            message="The MAF server hit an error while streaming.",
+            message=f"The MAF server hit an error while streaming back through {edge_label}.",
             detail={"error": str(exc), "tokens_forwarded": token_count},
             level="error",
         )
@@ -453,9 +493,13 @@ async def stream_generator(
     await _publish_trace(
         trace_id,
         source="maf",
-        target="kong",
+        target=edge_profile,
         hop="maf-to-kong-stream-complete",
-        message="FastAPI closed the SSE response back to Kong.",
+        message=(
+            "FastAPI closed the SSE response back to Kong."
+            if edge_profile == "kong"
+            else "FastAPI closed the direct SSE response back to the browser."
+        ),
         detail={"total_tokens": token_count, "characters": len(full_text)},
     )
     yield {
@@ -473,6 +517,8 @@ async def stream_generator(
 @app.post("/stream")
 async def stream(request: Request, req: ChatRequest) -> EventSourceResponse:
     trace_id = _extract_trace_id(request)
+    edge_profile = _local_edge_profile(request)
+    edge_label = _local_edge_label(edge_profile)
 
     try:
         agent = get_agent()
@@ -480,9 +526,9 @@ async def stream(request: Request, req: ChatRequest) -> EventSourceResponse:
         await _publish_trace(
             trace_id,
             source="maf",
-            target="kong",
+            target=edge_profile,
             hop="stream-error",
-            message="The MAF server is not configured correctly for streaming.",
+            message=f"The MAF server is not configured correctly for streaming back through {edge_label}.",
             detail={"error": str(exc)},
             level="error",
         )
@@ -490,10 +536,14 @@ async def stream(request: Request, req: ChatRequest) -> EventSourceResponse:
 
     await _publish_trace(
         trace_id,
-        source="kong",
+        source=edge_profile,
         target="maf",
         hop="gateway-to-maf",
-        message="Kong forwarded POST /stream to the MAF server.",
+        message=(
+            "Kong forwarded POST /stream to the MAF server."
+            if edge_profile == "kong"
+            else "The browser opened POST /stream directly on the MAF server."
+        ),
         detail={"path": "/stream", "mode": "sse", "prompt": req.message},
     )
 
@@ -517,7 +567,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "server:app",
         host="0.0.0.0",
-        port=int(os.getenv("AGENT_PORT", "8080")),
+        port=AGENT_PORT,
         reload=True,
         log_level="info",
     )
