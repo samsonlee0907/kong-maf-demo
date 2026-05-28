@@ -20,3 +20,6 @@ dist/
 .idea/
 .vscode/
 agent/.env
+agent/.env.local
+agent/.env.azure
+kong-maf-demo-agui/

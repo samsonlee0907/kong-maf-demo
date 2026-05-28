@@ -529,6 +529,19 @@
 
           <form id="chat-form" class="controls">
             <div class="control-row">
+              <div>
+                <div class="subtle">Route Mode</div>
+                <div class="mode-switch" role="tablist" aria-label="Gateway profile">
+                  <button id="profile-cloud" type="button">Cloud Gateway</button>
+                  <button id="profile-local" type="button">Local Preview</button>
+                </div>
+                <div class="subtle" id="profile-note">
+                  Choose whether the browser should call Azure Kong or the local FastAPI preview path.
+                </div>
+              </div>
+            </div>
+
+            <div class="control-row">
               <label for="gateway-url">
                 Gateway URL
                 <input
@@ -578,6 +591,14 @@
             <div class="metric">
               <span class="label">Gateway Target</span>
               <span class="value" id="gateway-summary">loading</span>
+            </div>
+            <div class="metric">
+              <span class="label">Selected Path</span>
+              <span class="value" id="path-value">loading</span>
+            </div>
+            <div class="metric">
+              <span class="label">Last Probe</span>
+              <span class="value" id="probe-value">Not run</span>
             </div>
           </div>
 
@@ -648,8 +669,13 @@
         sendButton: document.getElementById("send-button"),
         probeButton: document.getElementById("probe-button"),
         clearButton: document.getElementById("clear-button"),
+        profileCloud: document.getElementById("profile-cloud"),
+        profileLocal: document.getElementById("profile-local"),
+        profileNote: document.getElementById("profile-note"),
         servedFrom: document.getElementById("served-from"),
         gatewaySummary: document.getElementById("gateway-summary"),
+        pathValue: document.getElementById("path-value"),
+        probeValue: document.getElementById("probe-value"),
         traceValue: document.getElementById("trace-value"),
         traceChip: document.getElementById("trace-chip"),
         promptOutput: document.getElementById("prompt-output"),
@@ -824,6 +850,23 @@
         return "local-maf";
       }
 
+      function describeGatewayProfile(profile) {
+        if (profile === "azure-hosted") {
+          return "Cloud Gateway";
+        }
+        return "Local Preview";
+      }
+
+      function syncGatewayProfileControls() {
+        const isAzure = state.gatewayProfile === "azure-hosted";
+        elements.profileCloud.classList.toggle("active", isAzure);
+        elements.profileLocal.classList.toggle("active", !isAzure);
+        elements.pathValue.textContent = describeGatewayProfile(state.gatewayProfile);
+        elements.profileNote.textContent = isAzure
+          ? "Browser requests go through Azure Kong, which injects managed-identity auth before forwarding to the Foundry Hosted Agent."
+          : "Browser requests stay local and call the FastAPI adapter directly. This is the safe preview and troubleshooting path.";
+      }
+
       function applyGatewayProfile(gatewayUrl) {
         state.gatewayProfile = resolveGatewayProfile(gatewayUrl);
         const usingAzureHostedAgent = state.gatewayProfile === "azure-hosted";
@@ -832,6 +875,7 @@
           : state.config?.localAgentName || state.config?.agentName || "unknown";
 
         elements.badgeAgent.textContent = agentName;
+        syncGatewayProfileControls();
         return state.gatewayProfile;
       }
 
@@ -845,20 +889,37 @@
           : "No active trace";
       }
 
+      function chooseGatewayProfile(profile) {
+        const target =
+          profile === "azure-hosted"
+            ? state.config?.azureGatewayUrl
+            : state.config?.localGatewayUrl || window.location.origin;
+
+        if (!target) {
+          setStatus(`No configured URL is available for ${describeGatewayProfile(profile)}.`, true);
+          return;
+        }
+
+        elements.gatewayUrl.value = target;
+        updateSummary(target);
+        setStatus(`${describeGatewayProfile(profile)} selected.`);
+      }
+
       async function loadConfig() {
         const response = await fetch("/ui/config");
         state.config = await response.json();
         elements.gatewayUrl.value = state.config.defaultGatewayUrl || window.location.origin;
         elements.servedFrom.textContent = state.config.servedFrom || window.location.origin;
+        elements.probeValue.textContent = "Not run";
         updateSummary(elements.gatewayUrl.value);
         elements.badgeModel.textContent = state.config.foundryModel || "gpt-5.4-mini";
         if (state.gatewayProfile === "azure-hosted") {
           setStatus(
-            `Portal ready in Azure Hosted Agent mode. Requests will use ${elements.gatewayUrl.value} through Azure Kong and Foundry Hosted Agent responses.`
+            `Portal ready in Cloud Gateway mode. Requests will use ${elements.gatewayUrl.value} through Azure Kong and the Foundry Hosted Agent.`
           );
         } else if (state.config.portalMode === "direct-preview") {
           setStatus(
-            `Portal ready in direct preview mode. Requests will use ${elements.gatewayUrl.value} until Kong is started.`
+            `Portal ready in Local Preview mode. Requests will use ${elements.gatewayUrl.value} until you switch back to Cloud Gateway.`
           );
         } else {
           setStatus("Portal ready. Send a request to open a traced session.");
@@ -1335,9 +1396,11 @@
             endpoint: new URL("/health", gatewayUrl).toString(),
           });
           addClientLog("kong", "ui", "Gateway health probe returned to the browser.", payload, response.ok ? "info" : "warning");
+          elements.probeValue.textContent = response.ok ? `Healthy ${nowStamp()}` : `Unhealthy ${nowStamp()}`;
           setStatus("Gateway probe finished.");
         } catch (error) {
           addClientLog("kong", "ui", "Gateway probe failed in the browser.", { error: String(error) }, "error");
+          elements.probeValue.textContent = `Failed ${nowStamp()}`;
           setStatus("Gateway probe failed.", true);
         }
       }
@@ -1400,9 +1463,12 @@
         elements.promptMeta.textContent = "Idle";
         elements.responseOutput.textContent = "The next response will appear here.";
         elements.responseMeta.textContent = "Awaiting run";
+        elements.probeValue.textContent = "Not run";
         setStatus("Log window cleared.");
       }
 
+      elements.profileCloud.addEventListener("click", () => chooseGatewayProfile("azure-hosted"));
+      elements.profileLocal.addEventListener("click", () => chooseGatewayProfile("local-maf"));
       elements.modeInvoke.addEventListener("click", () => setMode("invoke"));
       elements.modeStream.addEventListener("click", () => setMode("stream"));
       elements.form.addEventListener("submit", handleSubmit);

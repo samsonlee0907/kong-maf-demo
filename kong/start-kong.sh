@@ -18,7 +18,26 @@ refresh_seconds="${TOKEN_REFRESH_SECONDS:-2400}"
 rendered_config="${KONG_DECLARATIVE_CONFIG:-/tmp/kong.azure.yaml}"
 template_file="/config/kong.azure.template.yaml"
 kong_prefix="${KONG_PREFIX:-/usr/local/kong}"
-kong_runtime_conf="${KONG_RUNTIME_CONF:-${kong_prefix}/kong.conf}"
+kong_runtime_conf="${KONG_RUNTIME_CONF:-/tmp/kong-runtime.conf}"
+
+render_runtime_conf() {
+  cat > "${kong_runtime_conf}" <<EOF
+database = off
+declarative_config = ${rendered_config}
+proxy_listen = 0.0.0.0:8000
+admin_listen = 127.0.0.1:8001
+proxy_access_log = /dev/stdout
+proxy_error_log = /dev/stderr
+nginx_proxy_proxy_buffering = off
+nginx_proxy_proxy_cache = off
+nginx_proxy_chunked_transfer_encoding = on
+nginx_proxy_tcp_nodelay = on
+nginx_proxy_tcp_nopush = on
+nginx_proxy_keepalive_timeout = 300
+nginx_proxy_proxy_read_timeout = 600s
+nginx_proxy_proxy_send_timeout = 600s
+EOF
+}
 
 refresh_token() {
   if [[ -z "${IDENTITY_ENDPOINT:-}" || -z "${IDENTITY_HEADER:-}" ]]; then
@@ -41,6 +60,7 @@ refresh_token() {
   envsubst < "${template_file}" > "${rendered_config}"
 }
 
+render_runtime_conf
 refresh_token
 
 (
@@ -51,4 +71,4 @@ refresh_token
   done
 ) &
 
-exec /docker-entrypoint.sh kong docker-start
+exec /docker-entrypoint.sh kong docker-start -p "${kong_prefix}" -c "${kong_runtime_conf}"
